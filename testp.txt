@@ -1,0 +1,35 @@
+{
+  "info": {
+    "name": "Spring Boot Batch Upload",
+    "_postman_id": "batch-upload-collection",
+    "description": "Upload CSV to trigger Spring Batch job",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Upload CSV",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "sample-data/input-data.csv"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/batch/upload",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "batch", "upload"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

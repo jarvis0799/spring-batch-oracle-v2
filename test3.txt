@@ -1,0 +1,9 @@
+spring:
+  batch:
+    jdbc:
+      initialize-schema: always
+  datasource:
+    url: jdbc:oracle:thin:@your-rds-endpoint:1521/ORCL
+    username: youruser
+    password: yourpass
+    driver-class-name: oracle.jdbc.OracleDriver

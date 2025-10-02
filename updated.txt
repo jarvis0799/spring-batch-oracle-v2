@@ -1,0 +1,28 @@
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Autowired private CsvRecordReader reader;
+    @Autowired private OracleRecordProcessor processor;
+    @Autowired private SqlAuditWriter writer;
+    @Autowired private JobRepository jobRepository;
+    @Autowired private PlatformTransactionManager transactionManager;
+
+    @Bean
+    public Job oracleBatchJob() {
+        Step step = new StepBuilder("oracle-step", jobRepository)
+            .<InputRecord, String>chunk(100, transactionManager)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .faultTolerant()
+            .skip(Exception.class)
+            .skipLimit(100)
+            .build();
+
+        return new JobBuilder("oracle-job", jobRepository)
+            .start(step)
+            .listener(new JobCompletionListener())
+            .build();
+    }
+}

@@ -1,0 +1,258 @@
+src/
+├── main/
+│   ├── java/com/example/batch/
+│   │   ├── controller/BatchTriggerController.java
+│   │   ├── config/BatchConfig.java
+│   │   ├── listener/JobCompletionListener.java
+│   │   ├── model/InputRecord.java
+│   │   ├── processor/OracleRecordProcessor.java
+│   │   ├── reader/CsvRecordReader.java
+│   │   ├── writer/SqlAuditWriter.java
+│   │   └── util/SqlBuilderUtil.java
+│   └── resources/
+│       ├── application.yml
+│       └── application-dev.yml
+├── test/
+│   └── java/com/example/batch/
+│       ├── processor/OracleRecordProcessorTest.java
+│       ├── reader/CsvRecordReaderTest.java
+│       └── writer/SqlAuditWriterTest.java
+└── sample-data/
+    └── input-data.csv
+
+sample-data/input-data.csv
+ID Name Status
+101 John ACTIVE
+102 Jane INACTIVE
+103 Raj PENDING
+
+ README.md (Highlights
+
+# Spring Boot Batch Enhancer
+
+Enhances your Spring Boot 3.4.4 app with:
+
+- Space-delimited CSV ingestion via REST API
+- Oracle query execution per row
+- Audit logging and SQL output generation
+- Exception handling and profile-based execution
+
+## 🔧 Setup
+
+1. Place your CSV in `sample-data/input-data.csv`
+2. Trigger batch via:
+
+POST /api/batch/upload Content-Type: multipart/form-data
+
+
+## 🧪 Testing
+
+Run unit tests:
+```bash
+mvn test
+
+📁 Output
+After execution:
+📁 Output
+After execution:
+input-data-output.sql
+
+
+---
+
+## 🧩 Core Code Modules
+
+### 📥 BatchTriggerController.java
+
+```java
+@RestController
+@RequestMapping("/api/batch")
+public class BatchTriggerController {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job oracleBatchJob;
+
+    @PostMapping("/upload")
+    public ResponseEntity<String> triggerBatch(@RequestParam("file") MultipartFile file) throws Exception {
+        Path tempFile = Files.createTempFile("batch-", ".csv");
+        Files.write(tempFile, file.getBytes());
+
+        JobParameters params = new JobParametersBuilder()
+            .addString("inputFile", tempFile.toAbsolutePath().toString())
+            .addLong("timestamp", System.currentTimeMillis())
+            .toJobParameters();
+
+        jobLauncher.run(oracleBatchJob, params);
+        return ResponseEntity.ok("Batch job triggered");
+    }
+}
+
+
+@Component
+@StepScope
+public class CsvRecordReader implements ItemReader<InputRecord> {
+
+    private BufferedReader reader;
+    private String line;
+
+    @Value("#{jobParameters['inputFile']}")
+    private String inputFile;
+
+    @PostConstruct
+    public void init() throws IOException {
+        reader = Files.newBufferedReader(Paths.get(inputFile));
+        reader.readLine(); // skip header
+    }
+
+    @Override
+    public InputRecord read() throws Exception {
+        if ((line = reader.readLine()) != null) {
+            String[] tokens = line.trim().split("\\s+");
+            return new InputRecord(tokens[0], tokens[1], tokens[2]);
+        }
+        return null;
+    }
+}
+
+
+public class InputRecord {
+    private String id;
+    private String name;
+    private String status;
+
+    public InputRecord() {}
+    public InputRecord(String id, String name, String status) {
+        this.id = id;
+        this.name = name;
+        this.status = status;
+    }
+
+    // Getters and setters
+}
+
+@Component
+@StepScope
+public class OracleRecordProcessor implements ItemProcessor<InputRecord, String> {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Override
+    public String process(InputRecord record) {
+        try {
+            int count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE id = ?", Integer.class, record.getId());
+
+            if (count > 0) {
+                jdbcTemplate.update("UPDATE users SET status = ? WHERE id = ?",
+                    record.getStatus(), record.getId());
+                return SqlBuilderUtil.buildUpdateSql(record);
+            } else {
+                jdbcTemplate.update("INSERT INTO users (id, name, status) VALUES (?, ?, ?)",
+                    record.getId(), record.getName(), record.getStatus());
+                return SqlBuilderUtil.buildInsertSql(record);
+            }
+        } catch (Exception e) {
+            return "-- ERROR for ID " + record.getId() + ": " + e.getMessage();
+        }
+    }
+}
+
+
+@Component
+@StepScope
+public class SqlAuditWriter implements ItemWriter<String> {
+
+    private BufferedWriter writer;
+
+    @Value("#{jobParameters['inputFile']}")
+    private String inputFile;
+
+    @PostConstruct
+    public void init() throws IOException {
+        Path outputPath = Paths.get(inputFile.replace(".csv", "-output.sql"));
+        writer = Files.newBufferedWriter(outputPath);
+    }
+
+    @Override
+    public void write(List<? extends String> items) throws Exception {
+        for (String sql : items) {
+            writer.write(sql);
+            writer.newLine();
+        }
+        writer.flush();
+    }
+}
+
+public class SqlBuilderUtil {
+
+    public static String buildInsertSql(InputRecord r) {
+        return String.format("INSERT INTO users (id, name, status) VALUES ('%s', '%s', '%s');",
+            r.getId(), r.getName(), r.getStatus());
+    }
+
+    public static String buildUpdateSql(InputRecord r) {
+        return String.format("UPDATE users SET status = '%s' WHERE id = '%s';",
+            r.getStatus(), r.getId());
+    }
+}
+
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Autowired private CsvRecordReader reader;
+    @Autowired private OracleRecordProcessor processor;
+    @Autowired private SqlAuditWriter writer;
+
+    @Bean
+    public Job oracleBatchJob(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory) {
+        Step step = stepBuilderFactory.get("oracle-step")
+            .<InputRecord, String>chunk(100)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .faultTolerant()
+            .skip(Exception.class)
+            .skipLimit(100)
+            .build();
+
+        return jobBuilderFactory.get("oracle-job")
+            .incrementer(new RunIdIncrementer())
+            .listener(new JobCompletionListener())
+            .start(step)
+            .build();
+    }
+}
+
+@Component
+public class JobCompletionListener extends JobExecutionListenerSupport {
+    @Override
+    public void afterJob(JobExecution jobExecution) {
+        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
+            System.out.println("✅ Batch job completed successfully.");
+        } else {
+            System.out.println("❌ Batch job failed.");
+        }
+    }
+}
+
+ Unit Tests
+Each test class mocks dependencies and validates logic for:
+- CSV parsing
+- Oracle query execution
+- SQL output generation
+
+
+spring:
+  batch:
+    jdbc:
+      initialize-schema: always
+  datasource:
+    url: jdbc:oracle:thin:@your-rds-endpoint:1521/ORCL
+    username: youruser
+    password: yourpass
+    driver-class-name: oracle.jdbc.OracleDriver

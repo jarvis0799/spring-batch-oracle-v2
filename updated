@@ -1,0 +1,17 @@
+@Component
+public class JobCompletionListener implements JobExecutionListener {
+
+    @Override
+    public void beforeJob(JobExecution jobExecution) {
+        System.out.println("🚀 Batch job is starting...");
+    }
+
+    @Override
+    public void afterJob(JobExecution jobExecution) {
+        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
+            System.out.println("✅ Batch job completed successfully.");
+        } else {
+            System.out.println("❌ Batch job failed with status: " + jobExecution.getStatus());
+        }
+    }
+}
